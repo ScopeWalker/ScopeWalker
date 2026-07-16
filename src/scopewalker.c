@@ -14,6 +14,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "core/draw.h"   /* primitives de dessin portables (ex-inline ici) */
+
 #define MIN_CANVAS   180
 #define MAX_CANVAS   1200
 #define MARGIN       14
@@ -53,8 +55,8 @@ enum { SC_VEC=0, SC_WAVE, SC_PARADE, SC_HIST, SC_COUNT };
 typedef struct {
     HDC     dc;
     HBITMAP bmp;
-    DWORD  *bits;
-    DWORD  *tpl;
+    Pixel  *bits;
+    Pixel  *tpl;
     int     w,h;
     RECT    rc;
     HWND    wnd;
@@ -125,7 +127,7 @@ static BOOL g_sliderDrag=FALSE;
 static RECT g_scChkRc[SC_COUNT],g_scSplitRc;
 
 static HDC     g_pfDC=NULL;   static HBITMAP g_pfBmp=NULL;
-static DWORD  *g_pfBits=NULL; static int g_pfW=0,g_pfH=0;
+static Pixel  *g_pfBits=NULL; static int g_pfW=0,g_pfH=0;
 
 static void RenderAll(void);
 static void RecomputeLayout(HWND);
@@ -135,133 +137,8 @@ static void FitWindowToContent(HWND);
 static void EnsureScopeBmp(int idx,int w,int h);
 static void RenderScope(int idx);
 
-/* ================= PRNG (dithering anti-moire) ================= */
-static unsigned int g_rng=2463534242u;
-static inline void SeedRng(unsigned int s){ g_rng=s?s:2463534242u; }
-static inline double Jitter(void)
-{
-    g_rng^=g_rng<<13; g_rng^=g_rng>>17; g_rng^=g_rng<<5;
-    return (double)(g_rng>>8)*(1.0/16777216.0)-0.5;
-}
-
-static void ComputeUVf(double R,double G,double B,double*u,double*v)
-{
-    double Y=0.299*R+0.587*G+0.114*B;
-    *u=(B-Y)*0.492;
-    *v=(R-Y)*0.877;
-}
-
-/* ================= primitives AA ================= */
-static void BlendPx(DWORD*buf,int W,int H,int x,int y,BYTE r,BYTE g,BYTE b,double a)
-{
-    if(x<0||x>=W||y<0||y>=H||a<=0.0) return;
-    if(a>1.0)a=1.0;
-    DWORD c=buf[y*W+x];
-    BYTE cr=(BYTE)((c>>16)&0xFF),cg=(BYTE)((c>>8)&0xFF),cb=(BYTE)(c&0xFF);
-    buf[y*W+x]=((DWORD)(BYTE)(r*a+cr*(1-a))<<16)
-              |((DWORD)(BYTE)(g*a+cg*(1-a))<<8)
-              | (DWORD)(BYTE)(b*a+cb*(1-a));
-}
-
-static void AACircle(DWORD*buf,int W,int H,int cx,int cy,int R,BYTE r,BYTE g,BYTE b,double a)
-{
-    int x0=cx-R-2,x1=cx+R+2,y0=cy-R-2,y1=cy+R+2;
-    if(x0<0)x0=0;
-    if(y0<0)y0=0;
-    if(x1>=W)x1=W-1;
-    if(y1>=H)y1=H-1;
-    for(int y=y0;y<=y1;y++) for(int x=x0;x<=x1;x++){
-        double d=sqrt((double)(x-cx)*(x-cx)+(double)(y-cy)*(y-cy));
-        double cov=1.0-fabs(d-R);
-        if(cov>0) BlendPx(buf,W,H,x,y,r,g,b,cov*a);
-    }
-}
-
-static double SegDist(double px,double py,double ax,double ay,double bx,double by)
-{
-    double vx=bx-ax,vy=by-ay,wx=px-ax,wy=py-ay;
-    double l2=vx*vx+vy*vy;
-    double t=(l2>1e-9)?(vx*wx+vy*wy)/l2:0.0;
-    if(t<0)t=0;
-    if(t>1)t=1;
-    double dx=px-(ax+t*vx),dy=py-(ay+t*vy);
-    return sqrt(dx*dx+dy*dy);
-}
-
-static void AALine(DWORD*buf,int W,int H,double ax,double ay,double bx,double by,
-                   double wid,BYTE r,BYTE g,BYTE b,double a)
-{
-    int x0=(int)floor(fmin(ax,bx)-wid-2),x1=(int)ceil(fmax(ax,bx)+wid+2);
-    int y0=(int)floor(fmin(ay,by)-wid-2),y1=(int)ceil(fmax(ay,by)+wid+2);
-    if(x0<0)x0=0;
-    if(y0<0)y0=0;
-    if(x1>=W)x1=W-1;
-    if(y1>=H)y1=H-1;
-    for(int y=y0;y<=y1;y++) for(int x=x0;x<=x1;x++){
-        double cov=(wid/2.0+0.5)-SegDist(x+0.5,y+0.5,ax,ay,bx,by);
-        if(cov>0) BlendPx(buf,W,H,x,y,r,g,b,cov*a);
-    }
-}
-
-static void AASquare(DWORD*buf,int W,int H,int cx,int cy,int half,BYTE r,BYTE g,BYTE b,double a)
-{
-    int x0=cx-half-2,x1=cx+half+2,y0=cy-half-2,y1=cy+half+2;
-    if(x0<0)x0=0;
-    if(y0<0)y0=0;
-    if(x1>=W)x1=W-1;
-    if(y1>=H)y1=H-1;
-    for(int y=y0;y<=y1;y++) for(int x=x0;x<=x1;x++){
-        double dx=fmax(fabs(x-cx)-half,0.0),dy=fmax(fabs(y-cy)-half,0.0);
-        double cov=1.0-sqrt(dx*dx+dy*dy);
-        if(cov>0) BlendPx(buf,W,H,x,y,r,g,b,cov*a);
-    }
-}
-
-static void AADisc(DWORD*buf,int W,int H,double cx,double cy,double R,BYTE r,BYTE g,BYTE b,double a)
-{
-    int x0=(int)floor(cx-R-1),x1=(int)ceil(cx+R+1);
-    int y0=(int)floor(cy-R-1),y1=(int)ceil(cy+R+1);
-    if(x0<0)x0=0;
-    if(y0<0)y0=0;
-    if(x1>=W)x1=W-1;
-    if(y1>=H)y1=H-1;
-    for(int y=y0;y<=y1;y++) for(int x=x0;x<=x1;x++){
-        double dx=(x+0.5)-cx,dy=(y+0.5)-cy;
-        double cov=R+0.5-sqrt(dx*dx+dy*dy);
-        if(cov>1.0)cov=1.0;
-        if(cov>0) BlendPx(buf,W,H,x,y,r,g,b,cov*a);
-    }
-}
-
-static void AARing(DWORD*buf,int W,int H,double cx,double cy,double R,double wid,
-                   BYTE r,BYTE g,BYTE b,double a)
-{
-    int x0=(int)floor(cx-R-2),x1=(int)ceil(cx+R+2);
-    int y0=(int)floor(cy-R-2),y1=(int)ceil(cy+R+2);
-    if(x0<0)x0=0;
-    if(y0<0)y0=0;
-    if(x1>=W)x1=W-1;
-    if(y1>=H)y1=H-1;
-    for(int y=y0;y<=y1;y++) for(int x=x0;x<=x1;x++){
-        double dx=(x+0.5)-cx,dy=(y+0.5)-cy;
-        double d=sqrt(dx*dx+dy*dy);
-        double cov=(wid/2.0+0.5)-fabs(d-R);
-        if(cov>1.0)cov=1.0;
-        if(cov>0) BlendPx(buf,W,H,x,y,r,g,b,cov*a);
-    }
-}
-
-static inline void AddPx(DWORD*buf,int W,int x,int y,BYTE R,BYTE G,BYTE B,double gain)
-{
-    DWORD c=buf[y*W+x];
-    int r=(int)((c>>16)&0xFF)+(int)(R*gain);
-    int g=(int)((c>>8)&0xFF)+(int)(G*gain);
-    int b=(int)(c&0xFF)+(int)(B*gain);
-    if(r>255)r=255;
-    if(g>255)g=255;
-    if(b>255)b=255;
-    buf[y*W+x]=((DWORD)r<<16)|((DWORD)g<<8)|(DWORD)b;
-}
+/* Les primitives de dessin (PRNG, ComputeUVf, BlendPx, AACircle, AALine,
+   AASquare, AADisc, AARing, AddPx) vivent desormais dans core/draw.{h,c}. */
 
 /* ================= graticules ================= */
 static void TplVec(void)
@@ -270,7 +147,7 @@ static void TplVec(void)
     int W=s->w,H=s->h;
     int D=(W<H)?W:H;
     int cx=W/2,cy=H/2;
-    DWORD*buf=s->bits;
+    Pixel*buf=s->bits;
     for(int i=0;i<W*H;i++) buf[i]=UI_BG_DWORD;
 
     double R1=D*0.44;                 /* cercle 100% */
@@ -327,7 +204,7 @@ static void TplWaveLike(int idx,BOOL parade)
 {
     Scope*s=&g_sc[idx];
     int W=s->w,H=s->h;
-    DWORD*buf=s->bits;
+    Pixel*buf=s->bits;
     for(int i=0;i<W*H;i++) buf[i]=UI_BG_DWORD;
 
     for(int p=0;p<=4;p++){
@@ -359,7 +236,7 @@ static void TplHist(void)
 {
     Scope*s=&g_sc[SC_HIST];
     int W=s->w,H=s->h;
-    DWORD*buf=s->bits;
+    Pixel*buf=s->bits;
     for(int i=0;i<W*H;i++) buf[i]=UI_BG_DWORD;
 
     for(int p=0;p<=4;p++){
@@ -871,8 +748,8 @@ static void EnsureScopeBmp(int idx,int w,int h)
     HBITMAP nbm=CreateDIBSection(s->dc,&bi,DIB_RGB_COLORS,&nb,NULL,0);
     SelectObject(s->dc,nbm);
     FreeScopeBmp(idx);
-    s->bmp=nbm; s->bits=(DWORD*)nb; s->w=w; s->h=h;
-    s->tpl=(DWORD*)malloc((size_t)w*h*sizeof(DWORD));
+    s->bmp=nbm; s->bits=(Pixel*)nb; s->w=w; s->h=h;
+    s->tpl=(Pixel*)malloc((size_t)w*h*sizeof(Pixel));
     RebuildTemplate(idx);
 }
 
@@ -917,7 +794,7 @@ static void ApplySlider(int x)
     RenderAll();
 }
 
-static void RadioAA(DWORD*buf,int W,int H,HDC dc,RECT r,BOOL sel,const char*label)
+static void RadioAA(Pixel*buf,int W,int H,HDC dc,RECT r,BOOL sel,const char*label)
 {
     double cx=r.left+9.0,cy=r.top+11.0;
     if(sel){
@@ -928,7 +805,7 @@ static void RadioAA(DWORD*buf,int W,int H,HDC dc,RECT r,BOOL sel,const char*labe
     TextOutA(dc,r.left+22,r.top+2,label,(int)strlen(label));
 }
 
-static void CheckAA(DWORD*buf,int W,int H,HDC dc,RECT r,BOOL on,const char*label)
+static void CheckAA(Pixel*buf,int W,int H,HDC dc,RECT r,BOOL on,const char*label)
 {
     double cx=r.left+9.0,cy=r.top+10.0;
     if(on){
@@ -959,7 +836,7 @@ static BOOL EnsurePopupBuf(HDC ref,int W,int H)
     void*nb=NULL;
     g_pfBmp=CreateDIBSection(g_pfDC,&bi,DIB_RGB_COLORS,&nb,NULL,0);
     SelectObject(g_pfDC,g_pfBmp);
-    g_pfBits=(DWORD*)nb; g_pfW=W; g_pfH=H;
+    g_pfBits=(Pixel*)nb; g_pfW=W; g_pfH=H;
     return g_pfBits!=NULL;
 }
 

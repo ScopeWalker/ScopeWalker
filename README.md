@@ -61,12 +61,12 @@ Windows 10 or 11 (64-bit). Nothing else — it's a single standalone `.exe` writ
 
 ## Build from source
 
-The whole app is a single C file ([`src/scopewalker.c`](src/scopewalker.c)) using only the Win32 API. It links against `gdi32`, `user32`, `dwmapi` and `advapi32` — no third-party dependencies.
+The portable drawing core lives in [`src/core/`](src/core/) (no Win32 dependency); the Windows shell is [`src/scopewalker.c`](src/scopewalker.c). It links against `gdi32`, `user32`, `dwmapi` and `advapi32` — no third-party dependencies.
 
 ### MSVC (Developer Command Prompt)
 
 ```bat
-cl /O2 src\scopewalker.c /link gdi32.lib user32.lib dwmapi.lib advapi32.lib /subsystem:windows /out:scopewalker.exe
+cl /O2 src\scopewalker.c src\core\draw.c /link gdi32.lib user32.lib dwmapi.lib advapi32.lib /subsystem:windows /out:scopewalker.exe
 ```
 
 Verified with the Visual Studio 2019 Build Tools (x64).
@@ -74,7 +74,7 @@ Verified with the Visual Studio 2019 Build Tools (x64).
 ### MinGW-w64 (GCC)
 
 ```sh
-gcc -O2 -mwindows src/scopewalker.c -o scopewalker.exe -lgdi32 -luser32 -ldwmapi -ladvapi32
+gcc -O2 -mwindows src/scopewalker.c src/core/draw.c -o scopewalker.exe -lgdi32 -luser32 -ldwmapi -ladvapi32
 ```
 
 > `-mwindows` builds a GUI app (no console window). Drop it if you want a console for debugging.

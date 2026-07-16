@@ -39,14 +39,14 @@ call "%VCVARS%" >nul
 
 echo.
 echo === Compiling scopewalker.exe ===
-cl /nologo /O2 /W3 src\scopewalker.c ^
+cl /nologo /O2 /W3 src\scopewalker.c src\core\draw.c ^
    /link gdi32.lib user32.lib dwmapi.lib advapi32.lib ^
    /subsystem:windows /out:scopewalker.exe
 
 if errorlevel 1 goto :fail
 
-REM Clean up the intermediate object file.
-if exist scopewalker.obj del scopewalker.obj
+REM Clean up the intermediate object files.
+del *.obj 2>nul
 
 echo.
 echo === Build succeeded: scopewalker.exe ===
