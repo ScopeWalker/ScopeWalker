@@ -555,6 +555,17 @@ static void RenderHist(void)
        blancs brules inexistants. Ici, un comptage negligeable reste negligeable. */
     static const double HIST_GAMMA=0.45;
 
+    /* Table de la courbe gamma (0.45), calculee une seule fois. On interpole
+       lineairement dedans au lieu d'appeler pow() par colonne de pixels :
+       le rendu reste identique, mais on economise des milliers de pow(). */
+    #define HIST_LUT 1024
+    static double powlut[HIST_LUT+1];
+    static int lutReady=0;
+    if(!lutReady){
+        for(int i=0;i<=HIST_LUT;i++) powlut[i]=pow((double)i/HIST_LUT,HIST_GAMMA);
+        lutReady=1;
+    }
+
     static const BYTE col[3][3]={{255,70,70},{70,235,110},{90,130,255}};
     double alpha=0.5*g_brightness;
     if(alpha>1.0) alpha=1.0;
@@ -562,6 +573,7 @@ static void RenderHist(void)
     /* hauteur de la courbe pour chaque colonne de pixels */
     static double hgt[3][4096];
     int WW=(W>4096)?4096:W;
+    double invMax=(maxB>0)?1.0/maxB:0.0;
     for(int c=0;c<3;c++){
         for(int x=0;x<WW;x++){
             double fb=(WW>1)?((double)x*255.0/(double)(WW-1)):0.0;
@@ -569,8 +581,13 @@ static void RenderHist(void)
             int b1=(b0<255)?b0+1:255;
             double f=fb-b0;
             double v=(1.0-f)*sm[c][b0]+f*sm[c][b1];
-            double t=(v>0)?pow(v/maxB,HIST_GAMMA):0.0;
-            if(t>1)t=1;
+            double nv=v*invMax;
+            if(nv<0)nv=0;
+            if(nv>1)nv=1;
+            double fi=nv*HIST_LUT;
+            int li=(int)fi;
+            double t=(li<HIST_LUT)?(powlut[li]+(powlut[li+1]-powlut[li])*(fi-li))
+                                  :powlut[HIST_LUT];
             hgt[c][x]=t*(H-3);
         }
     }
@@ -611,25 +628,41 @@ static void RenderAll(void)
 }
 
 /* ================= capture ================= */
+/* Le contexte + le DIB de capture sont conserves d'une frame a l'autre :
+   on ne les recree que lorsque la taille de la zone change. Cela evite une
+   allocation/liberation GDI a chaque rafraichissement (~7 fois/seconde). */
+static HDC     g_capDC=NULL;
+static HBITMAP g_capBmp=NULL;
+static void   *g_capBits=NULL;
+static int     g_capW=0,g_capH=0;
+
 static void Capture(RECT r,BOOL force)
 {
     int w=r.right-r.left,h=r.bottom-r.top;
     if(w<2||h<2) return;
 
     HDC scr=GetDC(NULL);
-    HDC mem=CreateCompatibleDC(scr);
-    BITMAPINFO bi; memset(&bi,0,sizeof(bi));
-    bi.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);
-    bi.bmiHeader.biWidth=w;
-    bi.bmiHeader.biHeight=-h;
-    bi.bmiHeader.biPlanes=1;
-    bi.bmiHeader.biBitCount=32;
-    bi.bmiHeader.biCompression=BI_RGB;
+    if(!g_capDC) g_capDC=CreateCompatibleDC(scr);
 
-    void*bits=NULL;
-    HBITMAP bmp=CreateDIBSection(mem,&bi,DIB_RGB_COLORS,&bits,NULL,0);
-    HGDIOBJ ob=SelectObject(mem,bmp);
-    BitBlt(mem,0,0,w,h,scr,r.left,r.top,SRCCOPY|CAPTUREBLT);
+    if(!g_capBmp||g_capW!=w||g_capH!=h){
+        BITMAPINFO bi; memset(&bi,0,sizeof(bi));
+        bi.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);
+        bi.bmiHeader.biWidth=w;
+        bi.bmiHeader.biHeight=-h;
+        bi.bmiHeader.biPlanes=1;
+        bi.bmiHeader.biBitCount=32;
+        bi.bmiHeader.biCompression=BI_RGB;
+        void*nb=NULL;
+        HBITMAP nbm=CreateDIBSection(g_capDC,&bi,DIB_RGB_COLORS,&nb,NULL,0);
+        HGDIOBJ old=SelectObject(g_capDC,nbm);
+        if(g_capBmp) DeleteObject(g_capBmp);   /* ancien DIB : plus selectionne */
+        (void)old;                             /* 1ere fois : bitmap stock, a garder */
+        g_capBmp=nbm; g_capBits=nb; g_capW=w; g_capH=h;
+    }
+    if(!g_capBmp){ ReleaseDC(NULL,scr); return; }
+
+    BitBlt(g_capDC,0,0,w,h,scr,r.left,r.top,SRCCOPY|CAPTUREBLT);
+    ReleaseDC(NULL,scr);
 
     double area=(double)w*(double)h;
     int stride=(int)ceil(sqrt(area/(double)MAX_SAMPLES));
@@ -643,17 +676,13 @@ static void Capture(RECT r,BOOL force)
         g_sB=(BYTE*)malloc(cap); g_sCol=(WORD*)malloc((size_t)cap*sizeof(WORD));
         g_sCap=cap;
     }
-    if(!g_sR||!g_sG||!g_sB||!g_sCol){
-        SelectObject(mem,ob); DeleteObject(bmp);
-        DeleteDC(mem); ReleaseDC(NULL,scr);
-        return;
-    }
+    if(!g_sR||!g_sG||!g_sB||!g_sCol) return;
     g_sCount=0; g_sCols=nx;
 
     SeedRng(0x9E3779B9u);
     DWORD hash=2166136261u;
     int hstep=0;
-    BYTE*px=(BYTE*)bits;
+    BYTE*px=(BYTE*)g_capBits;
     for(int y=0;y<h;y+=stride){
         int ci=0;
         for(int x=0;x<w;x+=stride,ci++){
@@ -677,11 +706,6 @@ static void Capture(RECT r,BOOL force)
         }
     }
 
-    SelectObject(mem,ob);
-    DeleteObject(bmp);
-    DeleteDC(mem);
-    ReleaseDC(NULL,scr);
-
     if(!force&&hash==g_lastHash) return;
     g_lastHash=hash;
 
@@ -701,7 +725,7 @@ static void SetTracking(BOOL on)
         Capture(g_selRectScreen,TRUE);
     } else {
         ShowWindow(g_hOverlay,SW_HIDE);
-        strcpy(g_status,"Suivi en pause - cliquez sur ON pour reprendre.");
+        snprintf(g_status,sizeof(g_status),"Suivi en pause - cliquez sur ON pour reprendre.");
     }
     InvalidateRect(g_hMain,NULL,FALSE);
 }
@@ -712,7 +736,7 @@ static void ResetZone(void)
     g_sCount=0; g_sCols=0; g_lastHash=0;
     ShowWindow(g_hOverlay,SW_HIDE);
     RenderAll();
-    strcpy(g_status,"Zone reinitialisee. ALT + clic gauche pour en definir une nouvelle.");
+    snprintf(g_status,sizeof(g_status),"Zone reinitialisee. ALT + clic gauche pour en definir une nouvelle.");
     InvalidateRect(g_hMain,NULL,FALSE);
 }
 
@@ -1516,7 +1540,7 @@ static LRESULT CALLBACK MainProc(HWND hwnd,UINT m,WPARAM wp,LPARAM lp)
                 else {
                     ShowWindow(g_hOverlay,SW_HIDE);
                     g_hasSelection=FALSE;
-                    strcpy(g_status,"Selection trop petite - reessayez.");
+                    snprintf(g_status,sizeof(g_status),"Selection trop petite - reessayez.");
                     InvalidateRect(hwnd,NULL,FALSE);
                 }
                 g_refreshCounter=0;
@@ -1603,6 +1627,8 @@ static LRESULT CALLBACK MainProc(HWND hwnd,UINT m,WPARAM wp,LPARAM lp)
         }
         if(g_pfBmp) DeleteObject(g_pfBmp);
         if(g_pfDC) DeleteDC(g_pfDC);
+        if(g_capDC){ DeleteDC(g_capDC); g_capDC=NULL; }
+        if(g_capBmp){ DeleteObject(g_capBmp); g_capBmp=NULL; }
         if(g_hFont) DeleteObject(g_hFont);
         if(g_hFontBold) DeleteObject(g_hFontBold);
         if(g_hOverlay) DestroyWindow(g_hOverlay);
