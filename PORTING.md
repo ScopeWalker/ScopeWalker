@@ -50,9 +50,13 @@ attributes (capture exclusion, dark title bar) can be applied to SDL windows.
 
 - [x] **Phase 1 — extract portable draw core** → `src/core/draw.{h,c}`.
       Windows behaviour unchanged, still builds with MSVC. *(done)*
-- [ ] **Phase 1b — finish the core**: move `RenderVec/RenderWaveLike/RenderHist`
-      and the `Tpl*` graticules into `core/`. Blocker: they draw **text** via GDI
-      (`TextOutA`). Needs a portable text renderer first (embedded bitmap font).
+- [x] **Phase 1b — extract the render hot path**: `RenderVec/RenderWaveLike/
+      RenderHist` moved to `src/core/scopes.{h,c}`, driven by `CoreScope`/
+      `CoreParams` instead of globals. No text involved; Windows behaviour
+      unchanged. *(done)*
+- [ ] **Phase 1c — extract the graticules** (`Tpl*`): blocked on **text** — they
+      draw labels via GDI `TextOutA`. Needs a portable text renderer first
+      (embedded bitmap font), then the `Tpl*` builders move into `core/`.
 - [ ] **Phase 2 — SDL3 shell on Windows**: replace window/present/in-window input
       with SDL3; keep Win32 capture. Proves the architecture end-to-end.
 - [ ] **Phase 3 — macOS module**: ScreenCaptureKit capture + CGEventSource input

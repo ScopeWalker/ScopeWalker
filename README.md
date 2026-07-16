@@ -66,7 +66,7 @@ The portable drawing core lives in [`src/core/`](src/core/) (no Win32 dependency
 ### MSVC (Developer Command Prompt)
 
 ```bat
-cl /O2 src\scopewalker.c src\core\draw.c /link gdi32.lib user32.lib dwmapi.lib advapi32.lib /subsystem:windows /out:scopewalker.exe
+cl /O2 src\scopewalker.c src\core\draw.c src\core\scopes.c /link gdi32.lib user32.lib dwmapi.lib advapi32.lib /subsystem:windows /out:scopewalker.exe
 ```
 
 Verified with the Visual Studio 2019 Build Tools (x64).
@@ -74,7 +74,7 @@ Verified with the Visual Studio 2019 Build Tools (x64).
 ### MinGW-w64 (GCC)
 
 ```sh
-gcc -O2 -mwindows src/scopewalker.c src/core/draw.c -o scopewalker.exe -lgdi32 -luser32 -ldwmapi -ladvapi32
+gcc -O2 -mwindows src/scopewalker.c src/core/draw.c src/core/scopes.c -o scopewalker.exe -lgdi32 -luser32 -ldwmapi -ladvapi32
 ```
 
 > `-mwindows` builds a GUI app (no console window). Drop it if you want a console for debugging.

@@ -39,7 +39,7 @@ call "%VCVARS%" >nul
 
 echo.
 echo === Compiling scopewalker.exe ===
-cl /nologo /O2 /W3 src\scopewalker.c src\core\draw.c ^
+cl /nologo /O2 /W3 src\scopewalker.c src\core\draw.c src\core\scopes.c ^
    /link gdi32.lib user32.lib dwmapi.lib advapi32.lib ^
    /subsystem:windows /out:scopewalker.exe
 
