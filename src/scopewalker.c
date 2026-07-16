@@ -135,138 +135,43 @@ static void ApplySplitMode(void);
 static void FitWindowToContent(HWND);
 static void EnsureScopeBmp(int idx,int w,int h);
 static void RenderScope(int idx);
+static CoreParams CoreParamsNow(void);
+static CoreScope CoreScopeOf(int idx);
 
 /* Les primitives de dessin (PRNG, ComputeUVf, BlendPx, AACircle, AALine,
    AASquare, AADisc, AARing, AddPx) vivent desormais dans core/draw.{h,c}. */
 
 /* ================= graticules ================= */
-static void TplVec(void)
+/* Callback texte pour le cœur : rend via GDI (Segoe UI), donc identique a avant.
+   Le contexte opaque est le HDC du scope. */
+static void WinText(void *ctx,int x,int y,const char *s,
+                    unsigned char r,unsigned char g,unsigned char b)
 {
-    Scope*s=&g_sc[SC_VEC];
-    int W=s->w,H=s->h;
-    int D=(W<H)?W:H;
-    int cx=W/2,cy=H/2;
-    Pixel*buf=s->bits;
-    for(int i=0;i<W*H;i++) buf[i]=UI_BG_DWORD;
-
-    double R1=D*0.44;                 /* cercle 100% */
-    double k=R1/CHROMA_MAX;           /* echelle unique cibles <-> nuage */
-
-    AACircle(buf,W,H,cx,cy,(int)R1,100,100,106,0.6);
-    AACircle(buf,W,H,cx,cy,(int)(R1*0.5),100,100,106,0.35);
-    AALine(buf,W,H,0,cy,W,cy,1.0,88,88,94,0.35);
-    AALine(buf,W,H,cx,0,cx,H,1.0,88,88,94,0.35);
-
-    double sx2=0,sy2=0;
-    if(g_showSkin){
-        /* ligne des tons chair : direction du I-axis (~123 deg), longueur = R1 */
-        double u,v; ComputeUVf(255,200,160,&u,&v);
-        double len=sqrt(u*u+v*v);
-        if(len>1e-4){
-            double dx=u/len,dy=-v/len;
-            sx2=cx+dx*R1; sy2=cy+dy*R1;
-            AALine(buf,W,H,cx,cy,sx2,sy2,1.2,235,150,100,0.8);
-        }
-    }
-
-    typedef struct{const char*n;BYTE r,g,b;}T;
-    T t[6]={{"R",255,0,0},{"J",255,255,0},{"V",0,255,0},
-            {"C",0,255,255},{"B",0,0,255},{"M",255,0,255}};
-    int tx[6],ty[6];
-    int half=(int)(D*0.011); if(half<3) half=3;
-    for(int i=0;i<6;i++){
-        /* position REELLE de la primaire : chaque cible a son propre rayon
-           (R et C sur le cercle, V et M plus pres, J et B encore plus pres) */
-        double u,v; ComputeUVf(t[i].r,t[i].g,t[i].b,&u,&v);
-        tx[i]=(int)(cx+u*k);
-        ty[i]=(int)(cy-v*k);
-        AASquare(buf,W,H,tx[i],ty[i],half,t[i].r,t[i].g,t[i].b,0.95);
-    }
-
-    HGDIOBJ of=SelectObject(s->dc,g_hFont);
-    SetBkMode(s->dc,TRANSPARENT);
-    for(int i=0;i<6;i++){
-        SetTextColor(s->dc,RGB(150,150,155));
-        TextOutA(s->dc,tx[i]+half+5,ty[i]-8,t[i].n,(int)strlen(t[i].n));
-    }
-    SetTextColor(s->dc,RGB(120,120,124));
-    TextOutA(s->dc,cx+5,3,"100%",4);
-    if(g_showSkin){
-        SetTextColor(s->dc,RGB(225,160,120));
-        TextOutA(s->dc,(int)sx2+((sx2>=cx)?5:-34),(int)sy2+((sy2>=cy)?2:-16),"skin",4);
-    }
-    SelectObject(s->dc,of);
-    memcpy(s->tpl,s->bits,(size_t)W*H*sizeof(DWORD));
-}
-
-static void TplWaveLike(int idx,BOOL parade)
-{
-    Scope*s=&g_sc[idx];
-    int W=s->w,H=s->h;
-    Pixel*buf=s->bits;
-    for(int i=0;i<W*H;i++) buf[i]=UI_BG_DWORD;
-
-    for(int p=0;p<=4;p++){
-        int y=(int)((1.0-p/4.0)*(H-1));
-        AALine(buf,W,H,0,y,W,y,1.0,88,88,94,0.30);
-    }
-    if(parade||(idx==SC_WAVE&&g_wfRGB))
-        for(int k=1;k<3;k++){
-            int x=k*W/3;
-            AALine(buf,W,H,x,0,x,H,1.0,88,88,94,0.35);
-        }
-
-    HGDIOBJ of=SelectObject(s->dc,g_hFont);
-    SetBkMode(s->dc,TRANSPARENT);
-    SetTextColor(s->dc,RGB(120,120,124));
-    const char*lbl[5]={"0","25","50","75","100"};
-    for(int p=0;p<=4;p++){
-        int y=(int)((1.0-p/4.0)*(H-1));
-        int ty=y-14; if(ty<1) ty=1;
-        TextOutA(s->dc,3,ty,lbl[p],(int)strlen(lbl[p]));
-    }
-    SetTextColor(s->dc,RGB(110,110,116));
-    TextOutA(s->dc,W-62,3,parade?"parade":"waveform",parade?6:8);
-    SelectObject(s->dc,of);
-    memcpy(s->tpl,s->bits,(size_t)W*H*sizeof(DWORD));
-}
-
-static void TplHist(void)
-{
-    Scope*s=&g_sc[SC_HIST];
-    int W=s->w,H=s->h;
-    Pixel*buf=s->bits;
-    for(int i=0;i<W*H;i++) buf[i]=UI_BG_DWORD;
-
-    for(int p=0;p<=4;p++){
-        int x=(int)((p/4.0)*(W-1));
-        AALine(buf,W,H,x,0,x,H,1.0,88,88,94,0.28);
-    }
-    for(int p=1;p<4;p++){
-        int y=(int)((p/4.0)*(H-1));
-        AALine(buf,W,H,0,y,W,y,1.0,88,88,94,0.16);
-    }
-    AALine(buf,W,H,0,H-1,W,H-1,1.4,110,110,116,0.5);
-
-    HGDIOBJ of=SelectObject(s->dc,g_hFont);
-    SetBkMode(s->dc,TRANSPARENT);
-    SetTextColor(s->dc,RGB(120,120,124));
-    TextOutA(s->dc,4,H-18,"0",1);
-    TextOutA(s->dc,W-30,H-18,"255",3);
-    SetTextColor(s->dc,RGB(110,110,116));
-    TextOutA(s->dc,4,3,"RGB",3);
-    SelectObject(s->dc,of);
-    memcpy(s->tpl,s->bits,(size_t)W*H*sizeof(DWORD));
+    HDC dc=(HDC)ctx;
+    SetTextColor(dc,RGB(r,g,b));
+    TextOutA(dc,x,y,s,(int)strlen(s));
 }
 
 static void RebuildTemplate(int idx)
 {
     Scope*s=&g_sc[idx];
     if(!s->bits||!s->tpl||s->w<=0||s->h<=0) return;
-    if(idx==SC_VEC) TplVec();
-    else if(idx==SC_WAVE) TplWaveLike(SC_WAVE,FALSE);
-    else if(idx==SC_PARADE) TplWaveLike(SC_PARADE,TRUE);
-    else TplHist();
+
+    HGDIOBJ of=SelectObject(s->dc,g_hFont);
+    SetBkMode(s->dc,TRANSPARENT);
+
+    CoreScope cs=CoreScopeOf(idx);
+    CoreParams p=CoreParamsNow();
+    if(idx==SC_VEC)         CoreTplVec(&cs,&p,WinText,s->dc);
+    else if(idx==SC_WAVE)   CoreTplWaveLike(&cs,&p,0,WinText,s->dc);
+    else if(idx==SC_PARADE) CoreTplWaveLike(&cs,&p,1,WinText,s->dc);
+    else                    CoreTplHist(&cs,&p,WinText,s->dc);
+
+    SelectObject(s->dc,of);
+    /* Le texte GDI peut encore etre dans le lot : le vider avant de figer le
+       template, sinon les labels manqueraient dans la copie vers tpl. */
+    GdiFlush();
+    memcpy(s->tpl,s->bits,(size_t)s->w*s->h*sizeof(Pixel));
 }
 
 /* ================= rendu des scopes (delegue au cœur portable) ================= */
@@ -277,6 +182,7 @@ static CoreParams CoreParamsNow(void)
     p.sCount=g_sCount; p.sCols=g_sCols;
     p.brightness=g_brightness;
     p.zoom2=g_zoom2; p.clipping=g_clipping; p.wfRGB=g_wfRGB;
+    p.showSkin=g_showSkin;
     return p;
 }
 

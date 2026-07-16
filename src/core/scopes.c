@@ -219,3 +219,107 @@ void CoreRenderHist(CoreScope *s,const CoreParams *p)
         }
     }
 }
+
+/* ================= graticules (geometrie portable + texte delegue) ================= */
+void CoreTplVec(CoreScope *s,const CoreParams *p,CoreTextFn text,void *tctx)
+{
+    int W=s->w,H=s->h;
+    int D=(W<H)?W:H;
+    int cx=W/2,cy=H/2;
+    Pixel*buf=s->bits;
+    for(int i=0;i<W*H;i++) buf[i]=CORE_BG;
+
+    double R1=D*0.44;                 /* cercle 100% */
+    double k=R1/CHROMA_MAX;           /* echelle unique cibles <-> nuage */
+
+    AACircle(buf,W,H,cx,cy,(int)R1,100,100,106,0.6);
+    AACircle(buf,W,H,cx,cy,(int)(R1*0.5),100,100,106,0.35);
+    AALine(buf,W,H,0,cy,W,cy,1.0,88,88,94,0.35);
+    AALine(buf,W,H,cx,0,cx,H,1.0,88,88,94,0.35);
+
+    double sx2=0,sy2=0;
+    if(p->showSkin){
+        /* ligne des tons chair : direction du I-axis (~123 deg), longueur = R1 */
+        double u,v; ComputeUVf(255,200,160,&u,&v);
+        double len=sqrt(u*u+v*v);
+        if(len>1e-4){
+            double dx=u/len,dy=-v/len;
+            sx2=cx+dx*R1; sy2=cy+dy*R1;
+            AALine(buf,W,H,cx,cy,sx2,sy2,1.2,235,150,100,0.8);
+        }
+    }
+
+    struct{const char*n;uint8_t r,g,b;} t[6]={
+        {"R",255,0,0},{"J",255,255,0},{"V",0,255,0},
+        {"C",0,255,255},{"B",0,0,255},{"M",255,0,255}};
+    int tx[6],ty[6];
+    int half=(int)(D*0.011); if(half<3) half=3;
+    for(int i=0;i<6;i++){
+        /* position REELLE de la primaire : chaque cible a son propre rayon */
+        double u,v; ComputeUVf(t[i].r,t[i].g,t[i].b,&u,&v);
+        tx[i]=(int)(cx+u*k);
+        ty[i]=(int)(cy-v*k);
+        AASquare(buf,W,H,tx[i],ty[i],half,t[i].r,t[i].g,t[i].b,0.95);
+    }
+
+    if(text){
+        for(int i=0;i<6;i++)
+            text(tctx,tx[i]+half+5,ty[i]-8,t[i].n,150,150,155);
+        text(tctx,cx+5,3,"100%",120,120,124);
+        if(p->showSkin)
+            text(tctx,(int)sx2+((sx2>=cx)?5:-34),(int)sy2+((sy2>=cy)?2:-16),
+                 "skin",225,160,120);
+    }
+}
+
+void CoreTplWaveLike(CoreScope *s,const CoreParams *p,int parade,
+                     CoreTextFn text,void *tctx)
+{
+    int W=s->w,H=s->h;
+    Pixel*buf=s->bits;
+    for(int i=0;i<W*H;i++) buf[i]=CORE_BG;
+
+    for(int q=0;q<=4;q++){
+        int y=(int)((1.0-q/4.0)*(H-1));
+        AALine(buf,W,H,0,y,W,y,1.0,88,88,94,0.30);
+    }
+    if(parade||p->wfRGB)
+        for(int k=1;k<3;k++){
+            int x=k*W/3;
+            AALine(buf,W,H,x,0,x,H,1.0,88,88,94,0.35);
+        }
+
+    if(text){
+        const char*lbl[5]={"0","25","50","75","100"};
+        for(int q=0;q<=4;q++){
+            int y=(int)((1.0-q/4.0)*(H-1));
+            int ty=y-14; if(ty<1) ty=1;
+            text(tctx,3,ty,lbl[q],120,120,124);
+        }
+        text(tctx,W-62,3,parade?"parade":"waveform",110,110,116);
+    }
+}
+
+void CoreTplHist(CoreScope *s,const CoreParams *p,CoreTextFn text,void *tctx)
+{
+    (void)p;
+    int W=s->w,H=s->h;
+    Pixel*buf=s->bits;
+    for(int i=0;i<W*H;i++) buf[i]=CORE_BG;
+
+    for(int q=0;q<=4;q++){
+        int x=(int)((q/4.0)*(W-1));
+        AALine(buf,W,H,x,0,x,H,1.0,88,88,94,0.28);
+    }
+    for(int q=1;q<4;q++){
+        int y=(int)((q/4.0)*(H-1));
+        AALine(buf,W,H,0,y,W,y,1.0,88,88,94,0.16);
+    }
+    AALine(buf,W,H,0,H-1,W,H-1,1.4,110,110,116,0.5);
+
+    if(text){
+        text(tctx,4,H-18,"0",120,120,124);
+        text(tctx,W-30,H-18,"255",120,120,124);
+        text(tctx,4,3,"RGB",110,110,116);
+    }
+}

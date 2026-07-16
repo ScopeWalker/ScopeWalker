@@ -54,9 +54,13 @@ attributes (capture exclusion, dark title bar) can be applied to SDL windows.
       RenderHist` moved to `src/core/scopes.{h,c}`, driven by `CoreScope`/
       `CoreParams` instead of globals. No text involved; Windows behaviour
       unchanged. *(done)*
-- [ ] **Phase 1c — extract the graticules** (`Tpl*`): blocked on **text** — they
-      draw labels via GDI `TextOutA`. Needs a portable text renderer first
-      (embedded bitmap font), then the `Tpl*` builders move into `core/`.
+- [x] **Phase 1c — extract the graticules** (`Tpl*`): moved to `core/scopes.c` as
+      `CoreTplVec/CoreTplWaveLike/CoreTplHist`. Text is delegated to a `CoreTextFn`
+      callback supplied by the shell (GDI on Windows, so labels stay pixel-perfect;
+      native/bitmap on other OSes later). The shell owns the `bits`→`tpl` snapshot
+      (with `GdiFlush()` first on Windows). **The portable core is now complete** —
+      all scope math, rendering and graticule geometry live in `src/core/`, with no
+      OS dependency. Verified on Windows (0 warnings, screenshot-checked).
 - [ ] **Phase 2 — SDL3 shell on Windows**: replace window/present/in-window input
       with SDL3; keep Win32 capture. Proves the architecture end-to-end.
 - [ ] **Phase 3 — macOS module**: ScreenCaptureKit capture + CGEventSource input
