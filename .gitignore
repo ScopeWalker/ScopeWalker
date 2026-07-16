@@ -1,0 +1,33 @@
+# Build artifacts
+*.exe
+*.obj
+*.o
+*.lib
+*.a
+*.dll
+*.exp
+*.pdb
+*.ilk
+*.res
+*.map
+
+# Build directories
+build/
+out/
+bin/
+Debug/
+Release/
+x64/
+x86/
+
+# Editors / IDEs
+.vs/
+.vscode/
+*.user
+*.suo
+*.sln
+*.vcxproj*
+
+# OS
+Thumbs.db
+Desktop.ini

@@ -1,0 +1,12 @@
+# Normalize line endings for text files
+* text=auto
+
+# C source is LF in the repo
+*.c text eol=lf
+*.h text eol=lf
+*.md text eol=lf
+
+# Binary assets — never touch
+*.png binary
+*.gif binary
+*.exe binary
